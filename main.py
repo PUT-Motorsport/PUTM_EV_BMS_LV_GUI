@@ -14,11 +14,18 @@ sg.theme("Material2")
 @dataclass
 class BatteryData:
     current: float = 0.0
-    voltage: float = 0.0
-    temperature: float = 0.0
+    voltages: List[float] = None
+    temperatures: List[float] = None
     soc: float = 0.0
-    error_status: str = "No Errors"
-    error_detection: bool = False
+    efuse_state: int = 0
+    balance_status: int = 0
+    error_detection: int = 0
+
+    def __post_init__(self):
+        if self.temperatures is None:
+            self.temperatures = [0.0] * 8
+        if self.voltages is None:
+            self.voltages = [0.0] * 8
 
 def read_uart_data(serial_port, data_queue):
     while True:
@@ -59,18 +66,37 @@ if serial_port:
 
 # Layout GUI
 layout = [
-    [sg.Text("Battery Monitoring System", font=("Helvetica", 16))],
-    [sg.Text("Current:"), sg.Text("-", size=(10, 1), key="-CURRENT-"), sg.Text("A")],
-    [sg.Text("Voltage:"), sg.Text("-", size=(10, 1), key="-VOLTAGE-"), sg.Text("V")],
-    [sg.Text("Temperature:"), sg.Text("-", size=(10, 1), key="-TEMPERATURE-"), sg.Text("°C")],
-    [sg.Text("SOC:"), sg.Text("-", size=(10, 1), key="-SOC-"), sg.Text("%")],
-    [sg.Text("Error Status:"), sg.Text("-", size=(20, 1), key="-ERROR-")],
-    [sg.Text("Error Detection:"), sg.Text("-", size=(10, 1), key="-ERROR-DETECTION-")],
-    [sg.Button("BB_Start"), sg.Button("BB_Stop"), sg.Button("ED_ON"), sg.Button("ED_OFF"), sg.Button("Exit")]
+    [
+        sg.Image("putm_logo.png", size=(150, 150), pad=((0, 20), (0, 0))),
+        sg.Text("Battery Monitoring System", font=("Helvetica", 24), pad=((50, 0), (0, 0)))
+    ],
+    [
+        sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14)),
+        sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))
+    ],
+    [
+        sg.Frame("Temperatures", [
+            [sg.Text(f"T{i}", size=(5, 1), font=("Helvetica", 12)), sg.Text("-", size=(8, 1), key=f"-TEMP-{i}-", font=("Helvetica", 12))] for i in range(8)
+        ], element_justification="center", title_color="blue", font=("Helvetica", 14)),
+        sg.Frame("Voltages", [
+            [sg.Text(f"V{i}", size=(5, 1), font=("Helvetica", 12)), sg.Text("-", size=(8, 1), key=f"-VOLT-{i}-", font=("Helvetica", 12))] for i in range(8)
+        ], element_justification="center", title_color="blue", font=("Helvetica", 14))
+    ],
+    [sg.Text("Output current:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-CURRENT-", font=("Helvetica", 14)), sg.Text("A", font=("Helvetica", 14))],
+    [sg.Text("EFUSE state:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-EFUSE-STATE-", font=("Helvetica", 14))],
+    [sg.Text("Balance Status:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BALANCE-STATUS-", font=("Helvetica", 14))],
+    [sg.Text("Error Detection:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-ERROR-DETECTION-", font=("Helvetica", 14))],
+    [
+        sg.Button("BB_Start", font=("Helvetica", 12)), 
+        sg.Button("BB_Stop", font=("Helvetica", 12)), 
+        sg.Button("ED_ON", font=("Helvetica", 12)), 
+        sg.Button("ED_OFF", font=("Helvetica", 12)), 
+        sg.Button("Exit", font=("Helvetica", 12))
+    ]
 ]
 
 # Okno GUI
-window = sg.Window("Battery Monitor", layout)
+window = sg.Window("Battery Monitor", layout, resizable=True)
 
 try:
     while True:
@@ -94,12 +120,16 @@ try:
         # Aktualizacja danych z UART
         if data_queue:
             latest_data = data_queue.pop(0)
-            window["-CURRENT-"].update(f"{latest_data.get('current', '-'):.2f}")
-            window["-VOLTAGE-"].update(f"{latest_data.get('voltage', '-'):.2f}")
-            window["-TEMPERATURE-"].update(f"{latest_data.get('temperature', '-'):.2f}")
             window["-SOC-"].update(f"{latest_data.get('soc', '-'):.2f}")
-            window["-ERROR-"].update(latest_data.get('error_status', '-'))
-            window["-ERROR-DETECTION-"].update("On" if latest_data.get('error_detection', False) else "Off")
+            window["-BATTERY-STATE-"].update(latest_data.get('battery_state', '-'))
+            window["-CURRENT-"].update(f"{latest_data.get('current', '-'):.2f}")
+            window["-EFUSE-STATE-"].update(latest_data.get('efuse_state', '-'))
+            window["-BALANCE-STATUS-"].update(latest_data.get('balance_status', '-'))
+            window["-ERROR-DETECTION-"].update(latest_data.get('error_detection', '-'))
+
+            for i in range(8):
+                window[f"-TEMP-{i}-"].update(f"{latest_data['temperatures'][i]:.0f}")
+                window[f"-VOLT-{i}-"].update(f"{latest_data['voltages'][i]:.3f}")
 
 finally:
     window.close()
