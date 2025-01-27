@@ -5,6 +5,7 @@ import json
 import PySimpleGUI as sg
 import serial
 from serial import SerialException
+from serial.tools import list_ports
 from dataclasses import dataclass
 from typing import List
 
@@ -27,7 +28,15 @@ class BatteryData:
         if self.voltages is None:
             self.voltages = [0.0] * 8
 
-def read_uart_data(serial_port, data_queue):
+def find_usb_port():
+    """Funkcja do automatycznego wykrywania dostępnego portu USB."""
+    ports = list_ports.comports()
+    for port in ports:
+        if "USB" in port.description or "ACM" in port.device:
+            return port.device
+    return None
+
+def read_usb_data(serial_port, data_queue):
     while True:
         if serial_port and serial_port.in_waiting > 0:
             try:
@@ -35,44 +44,54 @@ def read_uart_data(serial_port, data_queue):
                 data = json.loads(line)
                 data_queue.append(data)
             except Exception as e:
-                print(f"UART Read Error: {e}")
+                print(f"USB Read Error: {e}")
         time.sleep(0.1)
 
-def send_uart_command(serial_port, command):
+def send_usb_command(serial_port, command):
     if serial_port:
         try:
             serial_port.write(f"{command}\n".encode('utf-8'))
         except Exception as e:
-            print(f"UART Write Error: {e}")
+            print(f"USB Write Error: {e}")
 
-# Próba inicjalizacji portu szeregowego
-try:
-    serial_port = serial.Serial(
-        port="/dev/ttyACM0",  # Ustaw właściwy port
-        baudrate=9600,
-        timeout=1
-    )
-except SerialException as e:
-    print(f"Serial port not available: {e}")
+# Automatyczne wykrywanie portu USB
+port = find_usb_port()
+if port:
+    try:
+        serial_port = serial.Serial(
+            port=port,
+            baudrate=9600,
+            timeout=1
+        )
+        print(f"Connected to USB port: {port}")
+    except SerialException as e:
+        print(f"Failed to connect to USB port: {e}")
+        serial_port = None
+else:
+    print("No USB port detected.")
     serial_port = None
 
-# Kolejka danych z UART
+# Kolejka danych z USB
 data_queue = []
 
-# Uruchom wątek do odczytu UART tylko jeśli port został otwarty
+# Uruchom wątek do odczytu USB tylko jeśli port został otwarty
 if serial_port:
-    uart_thread = threading.Thread(target=read_uart_data, args=(serial_port, data_queue), daemon=True)
-    uart_thread.start()
+    usb_thread = threading.Thread(target=read_usb_data, args=(serial_port, data_queue), daemon=True)
+    usb_thread.start()
 
 # Layout GUI
 layout = [
     [
-        sg.Image("putm_logo.png", size=(150, 150), pad=((0, 20), (0, 0))),
-        sg.Text("Battery Monitoring System", font=("Helvetica", 24), pad=((50, 0), (0, 0)))
+        sg.Column([
+            [sg.Text("Battery LV Monitor", font=("Helvetica", 24))]
+        ], justification="left", pad=((20, 0), (20, 0))),
+        sg.Image("putm_logo.png", size=(50, 50), pad=((50, 0), (0, 0)))
     ],
     [
-        sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14)),
         sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))
+    ],
+    [
+        sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14))
     ],
     [
         sg.Frame("Temperatures", [
@@ -96,7 +115,7 @@ layout = [
 ]
 
 # Okno GUI
-window = sg.Window("Battery Monitor", layout, resizable=True)
+window = sg.Window("Battery LV Monitor", layout, resizable=True)
 
 try:
     while True:
@@ -106,18 +125,18 @@ try:
             break
 
         elif event == "BB_Start":
-            send_uart_command(serial_port, "BB_Start")
+            send_usb_command(serial_port, "BB_Start")
 
         elif event == "BB_Stop":
-            send_uart_command(serial_port, "BB_Stop")
+            send_usb_command(serial_port, "BB_Stop")
 
         elif event == "ED_ON":
-            send_uart_command(serial_port, "ED_ON")
+            send_usb_command(serial_port, "ED_ON")
 
         elif event == "ED_OFF":
-            send_uart_command(serial_port, "ED_OFF")
+            send_usb_command(serial_port, "ED_OFF")
 
-        # Aktualizacja danych z UART
+        # Aktualizacja danych z USB
         if data_queue:
             latest_data = data_queue.pop(0)
             window["-SOC-"].update(f"{latest_data.get('soc', '-'):.2f}")
