@@ -41,10 +41,12 @@ def read_usb_data(serial_port, data_queue):
         if serial_port and serial_port.in_waiting > 0:
             try:
                 line = serial_port.readline().decode('utf-8').strip()
-                data = json.loads(line)
-                data_queue.append(data)
+                data = json.loads(line)  # Parsowanie danych JSON
+                data_queue.append(data)  # Dodanie danych do kolejki
+            except json.JSONDecodeError as e:
+                print(f"JSON Decode Error: {e}")  # Błąd parsowania JSON
             except Exception as e:
-                print(f"USB Read Error: {e}")
+                print(f"USB Read Error: {e}")  # Inne błędy
         time.sleep(0.1)
 
 def send_usb_command(serial_port, command):
@@ -85,7 +87,7 @@ layout = [
         sg.Column([
             [sg.Text("Battery LV Monitor", font=("Helvetica", 24))]
         ], justification="left", pad=((20, 0), (20, 0))),
-        sg.Image("putm_logo.png", size=(50, 50), pad=((50, 0), (0, 0)))
+        sg.Image("putm_logo.png", size=(130, 130), pad=((20, 0), (0, 0)))
     ],
     [
         sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))
@@ -125,23 +127,23 @@ try:
             break
 
         elif event == "BB_Start":
-            send_usb_command(serial_port, "BB_Start")
+            send_usb_command(serial_port, "BB_Start\n")
 
         elif event == "BB_Stop":
-            send_usb_command(serial_port, "BB_Stop")
+            send_usb_command(serial_port, "BB_Stop\n")
 
         elif event == "ED_ON":
-            send_usb_command(serial_port, "ED_ON")
+            send_usb_command(serial_port, "ED_ON\n")
 
         elif event == "ED_OFF":
-            send_usb_command(serial_port, "ED_OFF")
+            send_usb_command(serial_port, "ED_OFF\n")
 
         # Aktualizacja danych z USB
         if data_queue:
             latest_data = data_queue.pop(0)
-            window["-SOC-"].update(f"{latest_data.get('soc', '-'):.2f}")
+            window["-SOC-"].update(f"{latest_data.get('state_of_charge', '-'):.2f}")  # state_of_charge zamiast soc
             window["-BATTERY-STATE-"].update(latest_data.get('battery_state', '-'))
-            window["-CURRENT-"].update(f"{latest_data.get('current', '-'):.2f}")
+            window["-CURRENT-"].update(f"{latest_data.get('output_current', '-'):.2f}")  # output_current zamiast current
             window["-EFUSE-STATE-"].update(latest_data.get('efuse_state', '-'))
             window["-BALANCE-STATUS-"].update(latest_data.get('balance_status', '-'))
             window["-ERROR-DETECTION-"].update(latest_data.get('error_detection', '-'))
