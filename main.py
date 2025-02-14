@@ -56,7 +56,17 @@ def send_usb_command(serial_port, command):
         except Exception as e:
             print(f"USB Write Error: {e}")
 
+#Ustawienie portu do symulacji
+port = 'socket://127.0.0.1:7000'
+try:
+    serial_port = serial.serial_for_url(port, baudrate=9600, timeout=1)
+    print(f"Connected to virtual port: {port}")
+except SerialException as e:
+    print(f"Failed to connect to virtual port: {e}")
+    serial_port = None
+
 # Automatyczne wykrywanie portu USB
+"""
 port = find_usb_port()
 if port:
     try:
@@ -72,6 +82,7 @@ if port:
 else:
     print("No USB port detected.")
     serial_port = None
+"""
 
 # Kolejka danych z USB
 data_queue = []
