@@ -57,6 +57,7 @@ def send_usb_command(serial_port, command):
             print(f"USB Write Error: {e}")
 
 #Ustawienie portu do symulacji
+""""
 port = 'socket://127.0.0.1:7000'
 try:
     serial_port = serial.serial_for_url(port, baudrate=9600, timeout=1)
@@ -64,9 +65,8 @@ try:
 except SerialException as e:
     print(f"Failed to connect to virtual port: {e}")
     serial_port = None
-
-# Automatyczne wykrywanie portu USB
 """
+# Automatyczne wykrywanie portu USB
 port = find_usb_port()
 if port:
     try:
@@ -82,7 +82,6 @@ if port:
 else:
     print("No USB port detected.")
     serial_port = None
-"""
 
 # Kolejka danych z USB
 data_queue = []
@@ -160,8 +159,16 @@ try:
             window["-ERROR-DETECTION-"].update(latest_data.get('error_detection', '-'))
 
             for i in range(8):
-                window[f"-TEMP-{i}-"].update(f"{latest_data['temperatures'][i]:.0f}")
-                window[f"-VOLT-{i}-"].update(f"{latest_data['voltages'][i]:.3f}")
+                if "voltages" in latest_data and i < len(latest_data["voltages"]):
+                  window[f"-VOLT-{i}-"].update(f"{latest_data['voltages'][i]:.3f}")
+                else:
+                  window[f"-VOLT-{i}-"].update("-")  # Ustaw domyślną wartość
+
+                if "temperatures" in latest_data and i < len(latest_data["temperatures"]):
+                   window[f"-TEMP-{i}-"].update(f"{latest_data['temperatures'][i]:.0f}")
+                else:
+                   window[f"-TEMP-{i}-"].update("-")
+
 
 finally:
     window.close()
