@@ -127,7 +127,7 @@ layout = [
 ]
 
 # Okno GUI
-window = sg.Window("Battery LV Monitor", layout, resizable=True)
+window = sg.Window("Battery LV Monitor", layout, size=(500, 600), resizable=False)
 
 try:
     while True:
