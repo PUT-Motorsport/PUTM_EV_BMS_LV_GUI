@@ -12,6 +12,19 @@ from typing import List
 # Ustawienia GUI i portu szeregowego
 sg.theme("Material2")
 
+# Słownik mapujący stany baterii na opisy
+BATTERY_STATES = {
+    0: "All good",
+    1: "Charging",
+    2: "Unbalanced (difference > 0.2V)",
+    3: "Highest temperature > 48C",
+    4: "Too low voltage",
+    5: "Too high voltage",
+    6: "Too high temperature",
+    7: "Too high current",
+    8: "Sleep mode"
+}
+
 @dataclass
 class BatteryData:
     current: float = 0.0
@@ -100,7 +113,7 @@ layout = [
         sg.Image("putm_logo.png", size=(130, 130), pad=((20, 0), (0, 0)))
     ],
     [
-        sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))
+        [sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(20, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))]
     ],
     [
         sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14))
@@ -152,7 +165,8 @@ try:
         if data_queue:
             latest_data = data_queue.pop(0)
             window["-SOC-"].update(f"{latest_data.get('state_of_charge', '-'):.2f}")  # state_of_charge zamiast soc
-            window["-BATTERY-STATE-"].update(latest_data.get('battery_state', '-'))
+            battery_state = latest_data.get('battery_state', 0)
+            window["-BATTERY-STATE-"].update(BATTERY_STATES.get(battery_state, "Unknown state"))  # Mapowanie stanu na opis
             window["-CURRENT-"].update(f"{latest_data.get('output_current', '-'):.2f}")  # output_current zamiast current
             window["-EFUSE-STATE-"].update(latest_data.get('efuse_state', '-'))
             window["-BALANCE-STATUS-"].update(latest_data.get('balance_status', '-'))
