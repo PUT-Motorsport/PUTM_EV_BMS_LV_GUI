@@ -1,190 +1,208 @@
 import sys
-import threading
-import time
 import json
-import PySimpleGUI as sg
+import threading
+import queue
+import time
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel
+from lv_2 import MainWindow as MainWindowLV
+#from hv_6 import MainWindow as MainWindowHV
+
 import serial
-from serial import SerialException
-from serial.tools import list_ports
-from dataclasses import dataclass
-from typing import List
+import serial.tools.list_ports
+import socket
 
-# Ustawienia GUI i portu szeregowego
-sg.theme("Material2")
+def safe_readline(source):
+    raw = source.readline()
+    return raw.decode("utf-8").strip() if isinstance(raw, bytes) else raw.strip()
 
-# Słownik mapujący stany baterii na opisy
-BATTERY_STATES = {
-    0: "All good",
-    1: "Charging",
-    2: "Unbalanced (difference > 0.2V)",
-    3: "Highest temperature > 48C",
-    4: "Too low voltage",
-    5: "Too high voltage",
-    6: "Too high temperature",
-    7: "Too high current",
-    8: "Sleep mode"
-}
-
-@dataclass
-class BatteryData:
-    current: float = 0.0
-    voltages: List[float] = None
-    temperatures: List[float] = None
-    soc: float = 0.0
-    efuse_state: int = 0
-    balance_status: int = 0
-    error_detection: int = 0
-
-    def __post_init__(self):
-        if self.temperatures is None:
-            self.temperatures = [0.0] * 8
-        if self.voltages is None:
-            self.voltages = [0.0] * 8
-
-def find_usb_port():
-    """Funkcja do automatycznego wykrywania dostępnego portu USB."""
-    ports = list_ports.comports()
-    for port in ports:
-        if "USB" in port.description or "ACM" in port.device:
-            return port.device
-    return None
-
-def read_usb_data(serial_port, data_queue):
-    while True:
-        if serial_port and serial_port.in_waiting > 0:
-            try:
-                line = serial_port.readline().decode('utf-8').strip()
-                data = json.loads(line)  # Parsowanie danych JSON
-                data_queue.append(data)  # Dodanie danych do kolejki
-            except json.JSONDecodeError as e:
-                print(f"JSON Decode Error: {e}")  # Błąd parsowania JSON
-            except Exception as e:
-                print(f"USB Read Error: {e}")  # Inne błędy
-        time.sleep(0.1)
-
-def send_usb_command(serial_port, command):
-    if serial_port:
-        try:
-            serial_port.write(f"{command}\n".encode('utf-8'))
-        except Exception as e:
-            print(f"USB Write Error: {e}")
-
-#Ustawienie portu do symulacji
-""""
-port = 'socket://127.0.0.1:7000'
-try:
-    serial_port = serial.serial_for_url(port, baudrate=9600, timeout=1)
-    print(f"Connected to virtual port: {port}")
-except SerialException as e:
-    print(f"Failed to connect to virtual port: {e}")
-    serial_port = None
-"""
-# Automatyczne wykrywanie portu USB
-port = find_usb_port()
-if port:
+def detect_source_and_type():
+    '''socket do symulacji'''
     try:
-        serial_port = serial.Serial(
-            port=port,
-            baudrate=9600,
-            timeout=1
-        )
-        print(f"Connected to USB port: {port}")
-    except SerialException as e:
-        print(f"Failed to connect to USB port: {e}")
-        serial_port = None
-else:
-    print("No USB port detected.")
-    serial_port = None
+        source = open_socket()
+        line = safe_readline(source)
+        if line:
+            data = json.loads(line)
+            return source, data
+        source.close()
+    except Exception:
+        pass
 
-# Kolejka danych z USB
-data_queue = []
+    ports = serial.tools.list_ports.comports()
+    for p in ports:
+        try:
+            s = serial.Serial(p.device, baudrate=9600, timeout=1)
+            time.sleep(0.1)
+            line = safe_readline(s)
+            if line:
+                data = json.loads(line)
+                return s, data 
+            s.close()
+        except Exception as e:
+            print(f"Port {p.device} failed: {e}")
+            continue
 
-# Uruchom wątek do odczytu USB tylko jeśli port został otwarty
-if serial_port:
-    usb_thread = threading.Thread(target=read_usb_data, args=(serial_port, data_queue), daemon=True)
-    usb_thread.start()
-
-# Layout GUI
-layout = [
-    [
-        sg.Column([
-            [sg.Text("Battery LV Monitor", font=("Helvetica", 24))]
-        ], justification="left", pad=((20, 0), (20, 0))),
-        sg.Image("putm_logo.png", size=(130, 130), pad=((20, 0), (0, 0)))
-    ],
-    [
-        [sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(20, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))]
-    ],
-    [
-        sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14))
-    ],
-    [
-        sg.Frame("Temperatures", [
-            [sg.Text(f"T{i}", size=(5, 1), font=("Helvetica", 12)), sg.Text("-", size=(8, 1), key=f"-TEMP-{i}-", font=("Helvetica", 12))] for i in range(8)
-        ], element_justification="center", title_color="blue", font=("Helvetica", 14)),
-        sg.Frame("Voltages", [
-            [sg.Text(f"V{i}", size=(5, 1), font=("Helvetica", 12)), sg.Text("-", size=(8, 1), key=f"-VOLT-{i}-", font=("Helvetica", 12))] for i in range(8)
-        ], element_justification="center", title_color="blue", font=("Helvetica", 14))
-    ],
-    [sg.Text("Output current:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-CURRENT-", font=("Helvetica", 14)), sg.Text("A", font=("Helvetica", 14))],
-    [sg.Text("EFUSE state:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-EFUSE-STATE-", font=("Helvetica", 14))],
-    [sg.Text("Balance Status:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-BALANCE-STATUS-", font=("Helvetica", 14))],
-    [sg.Text("Error Detection:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-ERROR-DETECTION-", font=("Helvetica", 14))],
-    [
-        sg.Button("BB_Start", font=("Helvetica", 12)), 
-        sg.Button("BB_Stop", font=("Helvetica", 12)), 
-        sg.Button("ED_ON", font=("Helvetica", 12)), 
-        sg.Button("ED_OFF", font=("Helvetica", 12)), 
-        sg.Button("Exit", font=("Helvetica", 12))
-    ]
-]
-
-# Okno GUI
-window = sg.Window("Battery LV Monitor", layout, size=(500, 600), resizable=False)
-
-try:
-    while True:
-        event, values = window.read(timeout=100)
-
-        if event in (sg.WIN_CLOSED, "Exit"):
-            break
-
-        elif event == "BB_Start":
-            send_usb_command(serial_port, "BB_Start\n")
-
-        elif event == "BB_Stop":
-            send_usb_command(serial_port, "BB_Stop\n")
-
-        elif event == "ED_ON":
-            send_usb_command(serial_port, "ED_ON\n")
-
-        elif event == "ED_OFF":
-            send_usb_command(serial_port, "ED_OFF\n")
-
-        # Aktualizacja danych z USB
-        if data_queue:
-            latest_data = data_queue.pop(0)
-            window["-SOC-"].update(f"{latest_data.get('state_of_charge', '-'):.2f}")  # state_of_charge zamiast soc
-            battery_state = latest_data.get('battery_state', 0)
-            window["-BATTERY-STATE-"].update(BATTERY_STATES.get(battery_state, "Unknown state"))  # Mapowanie stanu na opis
-            window["-CURRENT-"].update(f"{latest_data.get('output_current', '-'):.2f}")  # output_current zamiast current
-            window["-EFUSE-STATE-"].update(latest_data.get('efuse_state', '-'))
-            window["-BALANCE-STATUS-"].update(latest_data.get('balance_status', '-'))
-            window["-ERROR-DETECTION-"].update(latest_data.get('error_detection', '-'))
-
-            for i in range(8):
-                if "voltages" in latest_data and i < len(latest_data["voltages"]):
-                  window[f"-VOLT-{i}-"].update(f"{latest_data['voltages'][i]:.3f}")
-                else:
-                  window[f"-VOLT-{i}-"].update("-")  # Ustaw domyślną wartość
-
-                if "temperatures" in latest_data and i < len(latest_data["temperatures"]):
-                   window[f"-TEMP-{i}-"].update(f"{latest_data['temperatures'][i]:.0f}")
-                else:
-                   window[f"-TEMP-{i}-"].update("-")
+    return None, None
 
 
-finally:
-    window.close()
-    if serial_port:
-        serial_port.close()
+class MainApp(QMainWindow):
+    def __init__(self, source=None):
+        super().__init__()
+        self.setWindowTitle("BMS App")
+
+        self.pending_label = QLabel("Waiting for data.")
+        self.pending_label.setMinimumSize(300, 300)
+        self.pending_label.setAlignment(Qt.AlignCenter)
+
+
+        self.source = source
+        self.exit_event = threading.Event()
+        self.widget_lv = None
+        self.widget_hv = None
+        self.active_widget = None
+
+        self.last_data = None
+        self.last_data_time = 0
+
+        if self.source:
+            self.thread = threading.Thread(target=self.reader_thread, daemon=True)
+            self.thread.start()
+
+        self.timer = self.startTimer(100)
+        self.set_widget(self.pending_label)  
+        self.show()
+
+    def reconnect_source(self):
+        print("Trying to reconnect.")
+        try:
+            new_source, new_data = detect_source_and_type()
+            if new_source:
+                self.source = new_source
+                self.last_data = new_data
+                self.last_data_time = time.time()
+
+                self.thread = threading.Thread(target=self.reader_thread, daemon=True)
+                self.thread.start()
+                print("Reconnected to a new data source.")
+        except Exception as e:
+            print(f"Reconnection failed: {e}")
+
+
+    def reader_thread(self):
+        while not self.exit_event.is_set():
+            try:
+                line = safe_readline(self.source)
+                if line:
+                    data = json.loads(line)
+                    self.last_data = data
+                    self.last_data_time = time.time()
+            except Exception as e:
+                time.sleep(0.5)  
+
+    def timerEvent(self, _):
+        data_timeout = 3 
+        time_since_last = time.time() - self.last_data_time
+
+        if self.last_data is None or time_since_last > data_timeout:
+            if self.active_widget != self.pending_label:
+                print("Switching to pending.")
+                self.set_widget(self.pending_label)
+
+            if self.source:
+                try:
+                    self.source.close()
+                except:
+                    pass
+                self.source = None
+
+            if not hasattr(self, 'last_recconnect_attempt'):
+                self.last_recconnect_attempt = 0
+            if time.time() - self.last_recconnect_attempt > 5:
+                self.last_recconnect_attempt = time.time()
+                self.reconnect_source()
+            return
+
+        data = self.last_data
+        is_lv = "state_of_charge" in data and "battery_state" in data
+        is_hv = "soc" in data and "cell_voltage" in data
+
+        if is_lv and not isinstance(self.active_widget, MainWindowLV):
+            print("Switching to LV GUI")
+            self.set_widget(self.get_lv_widget())
+
+        '''elif is_hv and not isinstance(self.active_widget, MainWindowHV):
+            print("Switching to HV GUI")
+            self.set_widget(self.get_hv_widget())'''
+
+        if hasattr(self.active_widget, "feed_data"):
+            self.active_widget.feed_data(data)
+
+    def set_widget(self, widget):
+        if self.active_widget and self.active_widget != widget:
+            self.active_widget.setParent(None)
+
+        if hasattr(widget, 'size'):
+            self.resize(widget.size())
+        self.active_widget = widget
+        self.setCentralWidget(widget)
+
+    def get_lv_widget(self):
+        if not self.widget_lv:
+            self.widget_lv = MainWindowLV(self.source, [], self.exit_event)
+        return self.widget_lv
+
+    '''def get_hv_widget(self):
+        if not self.widget_hv:
+            self.hv_read_queue = queue.Queue(maxsize=1)
+            self.widget_hv = MainWindowHV(
+                self.hv_read_queue, 
+                queue.Queue(maxsize=1),
+                threading.Event(),
+                self.exit_event,
+                None
+            )
+            def feed_data_hv(data):
+                try:
+                    while not self.hv_read_queue.empty():
+                        self.hv_read_queue.get_nowait()
+                    self.hv_read_queue.put(json.dumps(data))
+                except queue.Full:
+                    pass
+            self.widget_hv.feed_data = feed_data_hv
+        return self.widget_hv'''
+
+    def closeEvent(self, event):
+        self.exit_event.set()
+        if self.source:
+            try:
+                self.source.close()
+            except:
+                pass
+        event.accept()
+        QApplication.quit()
+
+
+def open_serial(port):
+    return serial.Serial(port=port, baudrate=9600, timeout=1)
+
+def open_socket(host="127.0.0.1", port=7000):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((host, port))
+    return s.makefile("r")
+
+def main():
+    app = QApplication(sys.argv)
+
+    source, first_data = detect_source_and_type()
+    
+    win = MainApp(source)
+
+    if first_data:
+        win.last_data = first_data
+        win.last_data_time = time.time()
+
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
