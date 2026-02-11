@@ -2,6 +2,9 @@ import sys
 import threading
 import time
 import json
+import csv
+import os
+from datetime import datetime
 import PySimpleGUI as sg
 import serial
 from serial import SerialException
@@ -41,6 +44,72 @@ class BatteryData:
         if self.voltages is None:
             self.voltages = [0.0] * 8
 
+# --- FUNKCJE LOGOWANIA DO CSV ---
+
+def create_csv_file():
+    """Tworzy nowy plik CSV z nagłówkami opartymi na dacie uruchomienia."""
+    if not os.path.exists("logs"):
+        os.makedirs("logs")
+        
+    filename = f"logs/battery_log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+    
+    # Definicja nagłówków
+    headers = [
+        "Timestamp", "Battery State", "Description", "SOC [%]", "Current [A]", 
+        "EFUSE State", "Balance Status", "Error Detection"
+    ]
+    # Dodanie nagłówków dla temperatur T0-T7
+    headers.extend([f"T{i} [C]" for i in range(8)])
+    # Dodanie nagłówków dla napięć V0-V7
+    headers.extend([f"V{i} [V]" for i in range(8)])
+    
+    try:
+        with open(filename, mode='w', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file, delimiter=';') # Używam średnika jako separatora (częste w Excelu w PL)
+            writer.writerow(headers)
+        return filename
+    except Exception as e:
+        print(f"Błąd tworzenia pliku CSV: {e}")
+        return None
+
+def log_data_to_csv(filename, data):
+    """Dopisuje wiersz danych do istniejącego pliku CSV."""
+    if not filename:
+        return
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+    
+    # Pobieranie podstawowych wartości
+    bat_state = data.get('battery_state', 0)
+    bat_desc = BATTERY_STATES.get(bat_state, "Unknown")
+    soc = data.get('state_of_charge', 0)
+    current = data.get('output_current', 0)
+    efuse = data.get('efuse_state', 0)
+    balance = data.get('balance_status', 0)
+    error = data.get('error_detection', 0)
+
+    # Pobieranie list temperatur i napięć (zabezpieczenie przed brakiem danych/krótszą listą)
+    temps = data.get('temperatures', [0]*8)
+    volts = data.get('voltages', [0]*8)
+    
+    # Upewnienie się, że listy mają 8 elementów (dopełnienie zerami jeśli za krótkie)
+    temps = (temps + [0]*8)[:8]
+    volts = (volts + [0]*8)[:8]
+
+    # Budowanie wiersza
+    row = [timestamp, bat_state, bat_desc, soc, current, efuse, balance, error]
+    row.extend(temps)
+    row.extend(volts)
+
+    try:
+        with open(filename, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file, delimiter=';')
+            writer.writerow(row)
+    except Exception as e:
+        print(f"Błąd zapisu do CSV: {e}")
+
+# --- KONIEC FUNKCJI LOGOWANIA ---
+
 def find_usb_port():
     """Funkcja do automatycznego wykrywania dostępnego portu USB."""
     ports = list_ports.comports()
@@ -54,8 +123,9 @@ def read_usb_data(serial_port, data_queue):
         if serial_port and serial_port.in_waiting > 0:
             try:
                 line = serial_port.readline().decode('utf-8').strip()
-                data = json.loads(line)  # Parsowanie danych JSON
-                data_queue.append(data)  # Dodanie danych do kolejki
+                if line: # Sprawdź czy linia nie jest pusta
+                    data = json.loads(line)  # Parsowanie danych JSON
+                    data_queue.append(data)  # Dodanie danych do kolejki
             except json.JSONDecodeError as e:
                 print(f"JSON Decode Error: {e}")  # Błąd parsowania JSON
             except Exception as e:
@@ -69,16 +139,6 @@ def send_usb_command(serial_port, command):
         except Exception as e:
             print(f"USB Write Error: {e}")
 
-#Ustawienie portu do symulacji
-""""
-port = 'socket://127.0.0.1:7000'
-try:
-    serial_port = serial.serial_for_url(port, baudrate=9600, timeout=1)
-    print(f"Connected to virtual port: {port}")
-except SerialException as e:
-    print(f"Failed to connect to virtual port: {e}")
-    serial_port = None
-"""
 # Automatyczne wykrywanie portu USB
 port = find_usb_port()
 if port:
@@ -95,6 +155,11 @@ if port:
 else:
     print("No USB port detected.")
     serial_port = None
+
+# Inicjalizacja pliku CSV
+csv_filename = create_csv_file()
+if csv_filename:
+    print(f"Logowanie danych do pliku: {csv_filename}")
 
 # Kolejka danych z USB
 data_queue = []
@@ -113,7 +178,7 @@ layout = [
         sg.Image("putm_logo.png", size=(130, 130), pad=((20, 0), (0, 0)))
     ],
     [
-        [sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(20, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))]
+        [sg.Text("Battery State:", font=("Helvetica", 14)), sg.Text("-", size=(30, 1), key="-BATTERY-STATE-", font=("Helvetica", 14))]
     ],
     [
         sg.Text("SOC:", font=("Helvetica", 14)), sg.Text("-", size=(10, 1), key="-SOC-", font=("Helvetica", 14)), sg.Text("%", font=("Helvetica", 14))
@@ -136,11 +201,12 @@ layout = [
         sg.Button("ED_ON", font=("Helvetica", 12)), 
         sg.Button("ED_OFF", font=("Helvetica", 12)), 
         sg.Button("Exit", font=("Helvetica", 12))
-    ]
+    ],
+    [sg.Text(f"Log file: {csv_filename}", font=("Helvetica", 8), text_color='gray')]
 ]
 
 # Okno GUI
-window = sg.Window("Battery LV Monitor", layout, size=(500, 600), resizable=False)
+window = sg.Window("Battery LV Monitor", layout, size=(550, 650), resizable=False)
 
 try:
     while True:
@@ -163,25 +229,34 @@ try:
 
         # Aktualizacja danych z USB
         if data_queue:
+            # Pobieramy najnowsze dane
             latest_data = data_queue.pop(0)
-            window["-SOC-"].update(f"{latest_data.get('state_of_charge', '-'):.2f}")  # state_of_charge zamiast soc
+            
+            # --- ZAPIS DO PLIKU CSV ---
+            # Zapisujemy dane zaraz po ich odebraniu
+            log_data_to_csv(csv_filename, latest_data)
+            # --------------------------
+
+            window["-SOC-"].update(f"{latest_data.get('state_of_charge', '-'):.2f}") 
             battery_state = latest_data.get('battery_state', 0)
-            window["-BATTERY-STATE-"].update(BATTERY_STATES.get(battery_state, "Unknown state"))  # Mapowanie stanu na opis
-            window["-CURRENT-"].update(f"{latest_data.get('output_current', '-'):.2f}")  # output_current zamiast current
+            window["-BATTERY-STATE-"].update(BATTERY_STATES.get(battery_state, "Unknown state"))
+            window["-CURRENT-"].update(f"{latest_data.get('output_current', '-'):.2f}") 
             window["-EFUSE-STATE-"].update(latest_data.get('efuse_state', '-'))
             window["-BALANCE-STATUS-"].update(latest_data.get('balance_status', '-'))
             window["-ERROR-DETECTION-"].update(latest_data.get('error_detection', '-'))
 
             for i in range(8):
                 if "voltages" in latest_data and i < len(latest_data["voltages"]):
-                  window[f"-VOLT-{i}-"].update(f"{latest_data['voltages'][i]:.3f}")
+                    val = latest_data['voltages'][i]
+                    window[f"-VOLT-{i}-"].update(f"{val:.3f}")
                 else:
-                  window[f"-VOLT-{i}-"].update("-")  # Ustaw domyślną wartość
+                    window[f"-VOLT-{i}-"].update("-") 
 
                 if "temperatures" in latest_data and i < len(latest_data["temperatures"]):
-                   window[f"-TEMP-{i}-"].update(f"{latest_data['temperatures'][i]:.0f}")
+                    val = latest_data['temperatures'][i]
+                    window[f"-TEMP-{i}-"].update(f"{val:.0f}")
                 else:
-                   window[f"-TEMP-{i}-"].update("-")
+                    window[f"-TEMP-{i}-"].update("-")
 
 
 finally:
